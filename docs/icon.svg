@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Long-term Chart Card: axes, average line, min/max band. Same family as the InfluxDB Proxy icon. -->
+  <path d="M84 150 L180 250 L262 196 L352 300 L452 176 L452 322 L352 390 L262 300 L180 340 L84 256 Z" fill="#f59e0b" opacity="0.28"/>
+  <polyline points="84,206 180,294 262,248 352,344 452,248" fill="none" stroke="#f59e0b" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M40 40 V472 H472" fill="none" stroke="#1e3a5f" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

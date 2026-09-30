@@ -1,0 +1,277 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>long-term-chart-card browser test</title>
+<style>
+  body { background: #131a24; margin: 0; padding: 16px; font-family: sans-serif;
+         --primary-text-color: #c3cfdf; --secondary-text-color: #7c8ca3;
+         --divider-color: #2a3547; --card-background-color: #1b2433; --primary-color: #ffc300; }
+  ha-card { display: block; background: #1b2433; border-radius: 12px; width: 600px; }
+  #stage > * { margin-bottom: 16px; }
+  #results { color: #c3cfdf; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<pre id="results">RUNNING</pre>
+<script type="module">
+import "../../long-term-chart-card.js";
+
+const fixture = await (await fetch("fixture.json")).json();
+const shot = new URLSearchParams(location.search).has("shot");
+const results = [];
+const check = (name, ok, detail = "") => results.push({ name, ok: !!ok, detail: ok ? "" : String(detail) });
+const tick = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+
+// Fixture timestamps are from the moment it was recorded; shift them so the
+// data ends "now" and the card's own time window keeps all of it.
+const shiftMs = Date.now() - Date.parse(fixture.generated);
+const shifted = {};
+for (const [id, points] of Object.entries(fixture.statistics)) {
+  shifted[id] = points.map((p) => ({ ...p, start: p.start + shiftMs, end: p.end + shiftMs }));
+}
+
+function fakeHass(language, { ws = null, api = null } = {}) {
+  const calls = [];
+  return {
+    calls,
+    language,
+    locale: { language },
+    states: fixture.states,
+    callWS: async (msg) => { calls.push(msg); return ws ? ws(msg) : shifted; },
+    callApi: async (method, path) => { calls.push({ method, path }); return api ? api(method, path) : {}; },
+  };
+}
+
+async function mount(config, hass) {
+  const el = document.createElement("long-term-chart-card");
+  el.setConfig(config);
+  document.getElementById("stage").appendChild(el);
+  el.hass = hass;
+  for (let i = 0; i < 40 && !el.shadowRoot.querySelector("polyline") && !el.shadowRoot.getElementById("info").textContent; i++) await tick();
+  return el;
+}
+const q = (el, sel) => el.shadowRoot.querySelectorAll(sel);
+const T = "sensor.living_room_temperature";
+const O = "sensor.outside_temperature";
+const H = "sensor.living_room_humidity";
+
+const base = { type: "custom:long-term-chart-card", title: "Temperatures", days: 7,
+  entities: [T, O, { entity: H, axis: "right" }] };
+
+if (shot) {
+  await mount({ ...base, y_min_step: 1 }, fakeHass("en"));
+  document.getElementById("results").remove();
+} else {
+  // 1. English, statistics, two axes
+  const hass = fakeHass("en");
+  const el = await mount(base, hass);
+  check("draws one line per series", q(el, "polyline").length === 3, q(el, "polyline").length);
+  check("draws the min/max band", q(el, "polygon").length === 3, q(el, "polygon").length);
+  check("legend lists every series", q(el, ".item").length === 3, q(el, ".item").length);
+  const texts = [...q(el, "svg text")].map((t) => t.textContent);
+  check("left axis carries °C", texts.some((t) => t.includes("°C")), texts.join("|"));
+  check("right axis carries %", texts.some((t) => t.includes("%")), texts.join("|"));
+  const buttons = [...q(el, "#periods button")];
+  check("five default period buttons", buttons.length === 5, buttons.length);
+  check("'7 days' button active", buttons.find((b) => b.className === "active")?.textContent === "7 days",
+        buttons.map((b) => b.className + ":" + b.textContent).join(","));
+  check("hourly statistics requested for 7 days", hass.calls[0]?.period === "hour", JSON.stringify(hass.calls[0]));
+  check("friendly names in the legend", el.shadowRoot.getElementById("legend").textContent.includes("Living room"));
+  check("dot-decimal numbers in English", /\d\.\d/.test(el.shadowRoot.getElementById("legend").textContent),
+        el.shadowRoot.getElementById("legend").textContent);
+
+  // 2. tooltip
+  const svg = el.shadowRoot.getElementById("chart");
+  const r = svg.getBoundingClientRect();
+  svg.dispatchEvent(new PointerEvent("pointermove", { clientX: r.left + r.width * 0.6, clientY: r.top + 50, bubbles: true }));
+  await tick();
+  const tip = el.shadowRoot.getElementById("tip");
+  check("tooltip shows on hover", tip.classList.contains("on"));
+  check("tooltip has a row per series", tip.querySelectorAll(".row").length === 3, tip.querySelectorAll(".row").length);
+
+  // 3. legend toggle
+  el.shadowRoot.querySelector('.item[data-entity="' + O + '"]').click();
+  await tick();
+  check("click in legend hides the series", q(el, "polyline").length === 2, q(el, "polyline").length);
+  check("hidden series marked in legend", el.shadowRoot.querySelector('.item[data-entity="' + O + '"]').classList.contains("off"));
+  el.shadowRoot.querySelector('.item[data-entity="' + O + '"]').click();
+  await tick();
+  check("second click shows it again", q(el, "polyline").length === 3, q(el, "polyline").length);
+  for (const id of [T, O, H]) el.shadowRoot.querySelector('.item[data-entity="' + id + '"]').click();
+  await tick();
+  check("all hidden -> hint", el.shadowRoot.getElementById("info").textContent.includes("click the legend"),
+        el.shadowRoot.getElementById("info").textContent);
+
+  // 4. period switch
+  const h2 = fakeHass("en");
+  const el2 = await mount({ ...base, days: 7 }, h2);
+  [...q(el2, "#periods button")].find((b) => b.textContent === "24 h").click();
+  await tick(150);
+  // the buttons are rebuilt on click - look them up again
+  const active = [...q(el2, "#periods button")].find((b) => b.className === "active");
+  check("24 h button becomes active", active?.textContent === "24 h", active?.textContent);
+  check("switching to 24 h fetches 5-minute statistics", h2.calls.at(-1)?.period === "5minute", JSON.stringify(h2.calls.at(-1)));
+
+  // 5. Polish
+  const pl = await mount(base, fakeHass("pl"));
+  check("Polish period label", [...q(pl, "#periods button")].some((b) => b.textContent === "7 dni"));
+  check("comma decimals in Polish", /\d,\d/.test(pl.shadowRoot.getElementById("legend").textContent),
+        pl.shadowRoot.getElementById("legend").textContent);
+
+  // 6. 5-minute statistics for short ranges
+  const hShort = fakeHass("en");
+  await mount({ ...base, days: 1 }, hShort);
+  check("5-minute statistics requested for 1 day", hShort.calls[0]?.period === "5minute", JSON.stringify(hShort.calls[0]));
+
+  // 7. errors and empty data
+  const e404 = await mount({ ...base, source: "influx" },
+    fakeHass("en", { api: () => { throw { status_code: 404, body: { message: "Not Found" } }; } }));
+  check("influx 404 -> proxy not configured", e404.shadowRoot.getElementById("info").textContent.includes("InfluxDB Proxy integration is not installed"),
+        e404.shadowRoot.getElementById("info").textContent);
+  const e503pl = await mount({ ...base, source: "influx" },
+    fakeHass("pl", { api: () => { throw { status_code: 503, body: { message: "x" } }; } }));
+  check("influx 503 -> proxy not configured (pl)", e503pl.shadowRoot.getElementById("info").textContent.includes("nie jest zainstalowana"),
+        e503pl.shadowRoot.getElementById("info").textContent);
+  const e502 = await mount({ ...base, source: "influx" },
+    fakeHass("en", { api: () => { throw { status_code: 502, body: { message: "InfluxDB query failed: boom" } }; } }));
+  check("influx 502 -> reason shown", e502.shadowRoot.getElementById("info").textContent.includes("boom"),
+        e502.shadowRoot.getElementById("info").textContent);
+  const influxOk = fakeHass("en", { api: () => shifted });
+  const iok = await mount({ ...base, source: "influx", days: 30 }, influxOk);
+  check("influx source draws from the proxy", q(iok, "polyline").length === 3, q(iok, "polyline").length);
+  check("proxy called with days", influxOk.calls[0]?.path?.includes("days=30"), JSON.stringify(influxOk.calls[0]));
+  const empty = await mount(base, fakeHass("en", { ws: () => ({}) }));
+  check("no statistics -> explanation", empty.shadowRoot.getElementById("info").textContent.includes("state_class"),
+        empty.shadowRoot.getElementById("info").textContent);
+
+  // 8. config validation
+  let threw = false;
+  try { document.createElement("long-term-chart-card").setConfig({}); } catch (e) { threw = true; }
+  check("missing entities -> config error", threw);
+
+  // 9. attacker-controlled strings: friendly_name and unit come from any
+  //    integration (MQTT discovery, REST sensors...), colour and name from the
+  //    dashboard config. None of them may become markup.
+  const PAY = '<img src=x onerror="window.__pwned=1">';
+  const evil = structuredClone(fixture.states);
+  evil[T].attributes.friendly_name = PAY;
+  evil[O].attributes.unit_of_measurement = PAY;
+  const hEvil = { ...fakeHass("en"), states: evil };
+  const xss = await mount({ ...base, entities: [
+    T,
+    { entity: O, color: 'red" onmouseover="window.__pwned=1' },
+    { entity: H, axis: "right", name: PAY, color: 'red"/><foreignObject><img src=x onerror="window.__pwned=1"></foreignObject><x a="' },
+  ] }, hEvil);
+  const sv = xss.shadowRoot.getElementById("chart");
+  const rr = sv.getBoundingClientRect();
+  sv.dispatchEvent(new PointerEvent("pointermove", { clientX: rr.left + rr.width / 2, clientY: rr.top + 40, bubbles: true }));
+  await tick(150);
+  const handlers = [...xss.shadowRoot.querySelectorAll("*")].filter((e) => [...e.attributes].some((a) => a.name.startsWith("on")));
+  check("rendered (escaping test is not vacuous)", q(xss, "polyline").length === 3, q(xss, "polyline").length);
+  check("no injected elements or event handlers", !xss.shadowRoot.querySelector("img, foreignObject") && !handlers.length,
+        handlers.map((e) => e.outerHTML.slice(0, 80)).join(" | "));
+  check("no script executed (name, unit, colour, friendly_name)", !window.__pwned);
+  check("hostile strings shown as text", xss.shadowRoot.getElementById("legend").textContent.includes("<img"),
+        xss.shadowRoot.getElementById("legend").textContent.slice(0, 120));
+  check("invalid colour falls back to the palette",
+        q(xss, "polyline")[1].getAttribute("stroke") === "#4fc3f7", q(xss, "polyline")[1].getAttribute("stroke"));
+
+  // 10. lifecycle: detached and attached again -> refresh timer comes back
+  const lc = await mount(base, fakeHass("en"));
+  check("timer runs while attached", !!lc._timer);
+  lc.remove();
+  check("timer stops when detached", !lc._timer);
+  lc._lastFetch = 0;                                   // pretend it was away for a while
+  const before = lc._hass.calls.length;
+  document.getElementById("stage").appendChild(lc);
+  await tick(100);
+  check("timer restarts after re-attach", !!lc._timer);
+  check("re-attach after a while refetches", lc._hass.calls.length > before, lc._hass.calls.length + " vs " + before);
+
+  // 11. setConfig again on a live card (card editor) -> refetch, no stale hover
+  const re = await mount(base, fakeHass("en"));
+  const n0 = re._hass.calls.length;
+  re.setConfig({ ...base, entities: [T] });
+  await tick(150);
+  check("setConfig on a live card refetches", re._hass.calls.length > n0);
+  check("setConfig on a live card redraws", q(re, "polyline").length === 1, q(re, "polyline").length);
+  const rsv = re.shadowRoot.getElementById("chart"), rr2 = rsv.getBoundingClientRect();
+  rsv.dispatchEvent(new PointerEvent("pointermove", { clientX: rr2.left + rr2.width / 2, clientY: rr2.top + 40, bubbles: true }));
+  await tick();
+  check("tooltip follows the new config", re.shadowRoot.querySelectorAll("#tip .row").length === 1,
+        re.shadowRoot.querySelectorAll("#tip .row").length);
+
+  // 12. race: 7d (slow) -> 24h -> 7d (fast); the last request must win
+  let callNo = 0;
+  const slowFirst = fakeHass("en", { ws: (msg) => {
+    callNo += 1;
+    const delay = callNo === 2 ? 400 : 20;             // call 1 = initial mount; call 2 = first 7d switch
+    const pick = callNo === 2 ? { [T]: shifted[T], [O]: shifted[O], [H]: shifted[H] } : { [T]: shifted[T] };
+    return new Promise((res) => setTimeout(() => res(pick), delay));
+  } });
+  const race = await mount({ ...base, days: 1 }, slowFirst);
+  const clickPeriod = (el, label) => [...q(el, "#periods button")].find((b) => b.textContent === label).click();
+  clickPeriod(race, "7 days");      // slow, stale
+  await tick(10);
+  clickPeriod(race, "24 h");
+  await tick(10);
+  clickPeriod(race, "7 days");      // fast, newest
+  await tick(700);
+  check("newest request wins over a slower older one", q(race, "polyline").length === 1, q(race, "polyline").length);
+
+  // 13. empty period must not resurrect the previous legend on pointerleave
+  let emptyNext = false;
+  const flip = fakeHass("en", { ws: () => (emptyNext ? {} : shifted) });
+  const em = await mount(base, flip);
+  emptyNext = true;
+  clickPeriod(em, "30 days");
+  await tick(150);
+  em.shadowRoot.getElementById("chart").dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+  await tick();
+  check("empty period keeps the legend empty", em.shadowRoot.getElementById("legend").innerHTML === "",
+        em.shadowRoot.getElementById("legend").textContent.slice(0, 80));
+
+  // 14. wide range on the right axis stays inside the chart
+  const powerStates = { ...fixture.states, "sensor.power": { entity_id: "sensor.power", state: "1",
+    attributes: { unit_of_measurement: "W", state_class: "measurement", friendly_name: "Power" } } };
+  const power = shifted[T].map((p, i) => ({ ...p, mean: (i * 53) % 8000, min: (i * 53) % 8000, max: (i * 53) % 8000 }));
+  const wide = await mount({ ...base, entities: [T, { entity: "sensor.power", axis: "right" }] },
+    { ...fakeHass("en", { ws: () => ({ [T]: shifted[T], "sensor.power": power }) }), states: powerStates });
+  const ys = [...q(wide, "polyline")].flatMap((pl) => pl.getAttribute("points").trim().split(/\s+/).map((pt) => Number(pt.split(",")[1])));
+  check("wide right-axis range is not clipped", ys.length > 0 && ys.every((y) => y >= 0 && y <= 220),
+        "min y " + Math.min(...ys) + ", max y " + Math.max(...ys));
+
+  // 15. grid step 2.5 printed with its decimal
+  const quarter = shifted[T].map((p, i) => ({ ...p, mean: (i % 14), min: (i % 14), max: (i % 14) }));
+  const dec = await mount({ ...base, show_range: false, entities: [T] }, fakeHass("en", { ws: () => ({ [T]: quarter }) }));
+  const labels = [...q(dec, "svg text")].map((t) => t.textContent);
+  check("step 2.5 labelled 2.5, 7.5 ...", labels.some((t) => t.startsWith("2.5")) && labels.some((t) => t.startsWith("7.5")), labels.join("|"));
+
+  // 16. a single sample is visible
+  const one = await mount({ ...base, entities: [T] }, fakeHass("en", { ws: () => ({ [T]: [shifted[T].at(-1)] }) }));
+  const pts = q(one, "polyline")[0]?.getAttribute("points").trim().split(/\s+/) || [];
+  check("single sample drawn as a visible dash", pts.length === 2 && pts[0].split(",")[0] !== pts[1].split(",")[0], pts.join(" "));
+
+  // 17. hass before setConfig does not throw
+  let early = null;
+  try {
+    const el = document.createElement("long-term-chart-card");
+    el.hass = fakeHass("en");
+    el.setConfig(base);
+    document.getElementById("stage").appendChild(el);
+    for (let i = 0; i < 40 && !el.shadowRoot.querySelector("polyline"); i++) await tick();
+    early = q(el, "polyline").length;
+  } catch (e) { early = "threw: " + e.message; }
+  check("hass before setConfig works", early === 3, early);
+
+  const failed = results.filter((r) => !r.ok);
+  document.getElementById("results").textContent =
+    results.map((r) => (r.ok ? "PASS  " : "FAIL  ") + r.name + (r.ok ? "" : "  -> " + r.detail)).join("\n") +
+    "\n" + (failed.length ? "FAILED" : "OK") + "  " + (results.length - failed.length) + "/" + results.length + " checks passed";
+}
+document.title = "DONE";
+</script>
+</body>
+</html>
