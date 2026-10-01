@@ -319,6 +319,32 @@ if (shot) {
   const titled = await mount({ ...base, show_periods: false }, fakeHass("en"));
   check("title stays when only buttons are hidden", vis(titled, "head") && vis(titled, "title") && !vis(titled, "periods"));
 
+  // 20. fill under the line
+  const nf = await mount(base, fakeHass("en"));
+  check("no fill by default", q(nf, "polygon.area").length === 0 && !nf.shadowRoot.querySelector("linearGradient"));
+  const fa = await mount({ ...base, fill: true }, fakeHass("en"));
+  check("fill: true -> an area per series", q(fa, "polygon.area").length === 3, q(fa, "polygon.area").length);
+  check("bands still drawn with fill", q(fa, "polygon.band").length === 3, q(fa, "polygon.band").length);
+  const g = fa.shadowRoot.querySelector("linearGradient stop");
+  check("gradient starts in the series colour at fill_opacity 0.35",
+        g && g.getAttribute("stop-color") === "#ffc300" && g.getAttribute("stop-opacity") === "0.35",
+        g && g.outerHTML);
+  const svgChildren = [...fa.shadowRoot.getElementById("chart").children].map((e) => e.tagName + (e.getAttribute("class") ? "." + e.getAttribute("class") : ""));
+  check("areas drawn before every line", svgChildren.lastIndexOf("polygon.area") < svgChildren.indexOf("polyline"), svgChildren.join(","));
+  const ay = fa.shadowRoot.querySelector("polygon.area").getAttribute("points").trim().split(/\s+/).map((pt) => Number(pt.split(",")[1]));
+  check("area reaches the bottom of the plot", ay.at(-1) === 220 - 22 && ay.at(-2) === 220 - 22, ay.slice(-2).join(","));
+  const one2 = await mount({ ...base, entities: [{ entity: T, fill: true }, O, { entity: H, axis: "right", fill: false }], fill_opacity: 0.4 }, fakeHass("en"));
+  check("per-entity fill", q(one2, "polygon.area").length === 1, q(one2, "polygon.area").length);
+  check("per-entity override of a card-wide fill",
+        q(await mount({ ...base, fill: true, entities: [T, { entity: O, fill: false }] }, fakeHass("en")), "polygon.area").length === 1);
+  check("fill_opacity applied", one2.shadowRoot.querySelector("linearGradient stop").getAttribute("stop-opacity") === "0.4");
+  const two = await mount({ ...base, fill: true }, fakeHass("en"));
+  check("gradient ids live in each card's own shadow root",
+        two.shadowRoot.getElementById("fill-0") && fa.shadowRoot.getElementById("fill-0") &&
+        two.shadowRoot.getElementById("fill-0") !== fa.shadowRoot.getElementById("fill-0"));
+  const xf = await mount({ ...base, fill: true, entities: [{ entity: T, color: 'red" onload="window.__pwned=1' }] }, fakeHass("en"));
+  check("hostile colour cannot reach the gradient", xf.shadowRoot.querySelector("linearGradient stop").getAttribute("stop-color") === "#ffc300" && !window.__pwned);
+
   const failed = results.filter((r) => !r.ok);
   document.getElementById("results").textContent =
     results.map((r) => (r.ok ? "PASS  " : "FAIL  ") + r.name + (r.ok ? "" : "  -> " + r.detail)).join("\n") +

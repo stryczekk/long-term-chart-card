@@ -23,7 +23,7 @@
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.1.0";
+export const VERSION = "1.1.1";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -258,6 +258,9 @@ export class LongTermChartCard extends HTMLElement {
       height: Math.round(numberOption(config.height, 220, 80, 1000)),
       lineWidth: numberOption(config.line_width, 1.8, 0.5, 8),
       bandOpacity: numberOption(config.band_opacity, 0.12, 0, 1),
+      // Area under the line: card-wide default, overridable per entity.
+      fill: config.fill === true,
+      fillOpacity: numberOption(config.fill_opacity, 0.35, 0, 1),
       showLegend: config.show_legend !== false,
       showPeriods: config.show_periods !== false,
       source: config.source === "influx" ? "influx" : "statistics",
@@ -265,12 +268,13 @@ export class LongTermChartCard extends HTMLElement {
       periods: periods,
       entities: config.entities.map((item, index) =>
         typeof item === "string"
-          ? { entity: item, name: null, color: COLORS[index % COLORS.length], axis: "left" }
+          ? { entity: item, name: null, color: COLORS[index % COLORS.length], axis: "left", fill: config.fill === true }
           : {
               entity: item.entity,
               name: item.name || null,
               color: safeColor(item.color, COLORS[index % COLORS.length]),
               axis: item.axis === "right" ? "right" : "left",
+              fill: typeof item.fill === "boolean" ? item.fill : config.fill === true,
             }
       ),
     };
@@ -643,6 +647,32 @@ export class LongTermChartCard extends HTMLElement {
         formatTime(t) + "</text>";
     }
 
+    // Areas first, so no fill ever covers another series' line or band.
+    // Gradient from the line colour down to transparent; ids are scoped to
+    // this card's shadow root, so two cards on a page do not collide.
+    let defs = "";
+    visible.forEach((s, i) => {
+      if (!s.fill || this._config.fillOpacity <= 0) return;
+      const y = yOf(s);
+      const id = "fill-" + i;
+      defs +=
+        '<linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + s.color + '" stop-opacity="' + this._config.fillOpacity + '"/>' +
+        '<stop offset="1" stop-color="' + s.color + '" stop-opacity="0"/></linearGradient>';
+      const first = s.points[0];
+      const last = s.points[s.points.length - 1];
+      const bottom = HEIGHT - BOTTOM;
+      const xs = s.points.length === 1 ? [x(first.start) - 5, x(first.start) + 5] : null;
+      const top = xs
+        ? xs[0] + "," + y(first.mean) + " " + xs[1] + "," + y(first.mean)
+        : s.points.map((p) => x(p.start) + "," + y(p.mean)).join(" ");
+      out +=
+        '<polygon class="area" points="' + top + " " +
+        (xs ? xs[1] : x(last.start)) + "," + bottom + " " + (xs ? xs[0] : x(first.start)) + "," + bottom +
+        '" fill="url(#' + id + ')" stroke="none"/>';
+    });
+    if (defs) out = "<defs>" + defs + "</defs>" + out;
+
     for (const s of visible) {
       const y = yOf(s);
       if (this._config.showRange && this._config.bandOpacity > 0 && s.points.some((p) => p.min != null)) {
@@ -654,7 +684,7 @@ export class LongTermChartCard extends HTMLElement {
           .reverse()
           .map((p) => x(p.start) + "," + y(p.min != null ? p.min : p.mean));
         out +=
-          '<polygon points="' + upper.concat(lower).join(" ") + '" fill="' +
+          '<polygon class="band" points="' + upper.concat(lower).join(" ") + '" fill="' +
           s.color + '" opacity="' + this._config.bandOpacity + '"/>';
       }
       // one sample: a short dash, a one-point polyline draws nothing

@@ -19,6 +19,7 @@ Assistant **long-term statistics** (no extra software), or from
   mean/min/max forever for every numeric entity with a `state_class`. This
   card reads them directly; nothing else to install.
 - **min/max band** under every line, so you see the spread, not only the average
+- optional **gradient fill** under a line, for the whole card or one series
 - **two Y axes** — e.g. temperature on the left, humidity on the right —
   with the **grids aligned**, so there is one set of grid lines, not two
 - **period buttons** (24 h, 7 days, 30 days, 3 months, 1 year by default)
@@ -103,6 +104,8 @@ entities:
 | `periods` | 1, 7, 30, 90, 365 days | buttons above the chart: `{ days, label }`, label optional |
 | `show_range` | `true` | draw the min/max band |
 | `band_opacity` | `0.12` | opacity of the min/max band, `0`–`1` (`0` draws no band) |
+| `fill` | `false` | fill the area under every line with a gradient of its colour; per entity with `fill: true/false` |
+| `fill_opacity` | `0.35` | opacity of that fill at the line, fading to transparent at the bottom, `0`–`1` |
 | `line_width` | `1.8` | line thickness, `0.5`–`8` |
 | `height` | `220` | chart height in px, `80`–`1000`; the card takes more rows in a sections view |
 | `show_legend` | `true` | the legend under the chart (values and click-to-hide) |
@@ -121,6 +124,7 @@ Entity object:
 | `name` | label (default: friendly name) |
 | `color` | a CSS colour: `#hex`, a name, `rgb()`/`hsl()` or `var(--…)`; anything else falls back to the palette of nine distinct hues |
 | `axis` | `left` (default) or `right` |
+| `fill` | fill under this line (overrides the card-wide `fill`) |
 
 A taller card without the legend and the buttons, e.g. for a wall tablet:
 
