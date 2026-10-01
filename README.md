@@ -20,6 +20,7 @@ Assistant **long-term statistics** (no extra software), or from
   card reads them directly; nothing else to install.
 - **min/max band** under every line, so you see the spread, not only the average
 - optional **gradient fill** under a line, for the whole card or one series
+- optional **min / avg / max table** for the selected period
 - **two Y axes** — e.g. temperature on the left, humidity on the right —
   with the **grids aligned**, so there is one set of grid lines, not two
 - **period buttons** (24 h, 7 days, 30 days, 3 months, 1 year by default)
@@ -108,6 +109,7 @@ entities:
 | `fill_opacity` | `0.35` | opacity of that fill at the line, fading to transparent at the bottom, `0`–`1` |
 | `line_width` | `1.8` | line thickness, `0.5`–`8` |
 | `height` | `220` | chart height in px, `80`–`1000`; the card takes more rows in a sections view |
+| `show_stats` | `false` | a table under the legend: min, average and max of each visible series over the selected period (min/max from the band, i.e. the real extremes); hover a value to see when it happened |
 | `show_legend` | `true` | the legend under the chart (values and click-to-hide) |
 | `show_periods` | `true` | the period buttons; the chart stays on `days` |
 | `decimals` | `1` | decimals in the legend and tooltip |

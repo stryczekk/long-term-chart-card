@@ -181,3 +181,25 @@ test("gridRows: default height keeps the 1.0 size, taller charts take more rows"
   assert.equal(card.gridRows(80), 3);
   assert.ok(card.gridRows(500) > card.gridRows(220));
 });
+
+test("seriesStats: extremes from the band, average from the means", () => {
+  const pts = [
+    { start: 1, mean: 20, min: 19, max: 21 },
+    { start: 2, mean: 22, min: 21.5, max: 25 },
+    { start: 3, mean: 18, min: 17, max: 18.5 },
+  ];
+  const st = card.seriesStats(pts);
+  assert.equal(st.min, 17);
+  assert.equal(st.minAt, 3);
+  assert.equal(st.max, 25);
+  assert.equal(st.maxAt, 2);
+  assert.equal(st.avg, 20);
+});
+
+test("seriesStats: without a band, empty and null means", () => {
+  assert.deepEqual(card.seriesStats([{ start: 1, mean: 5 }, { start: 2, mean: 7 }]),
+    { min: 5, max: 7, avg: 6, minAt: 1, maxAt: 2 });
+  assert.equal(card.seriesStats([]), null);
+  assert.equal(card.seriesStats(null), null);
+  assert.equal(card.seriesStats([{ start: 1, mean: null }]), null);
+});

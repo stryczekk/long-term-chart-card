@@ -23,7 +23,7 @@
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.1.1";
+export const VERSION = "1.2.0";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -48,6 +48,9 @@ export const STRINGS = {
     period_day: "1 day",
     period_months: "{n} months",
     period_year: "1 year",
+    stats_min: "min",
+    stats_avg: "avg",
+    stats_max: "max",
     card_name: "Long-term chart",
     card_description: "Chart from long-term statistics or from InfluxDB",
   },
@@ -67,6 +70,9 @@ export const STRINGS = {
     period_day: "1 dzień",
     period_months: "{n} mies.",
     period_year: "rok",
+    stats_min: "min",
+    stats_avg: "śr.",
+    stats_max: "maks.",
     card_name: "Wykres długoterminowy",
     card_description: "Wykres ze statystyk długoterminowych albo z InfluxDB",
   },
@@ -122,6 +128,29 @@ export function numberOption(value, fallback, min, max) {
 // (about 100 px). 80 px per unit keeps the 1.0 default of 4 rows at 220 px.
 export function gridRows(height) {
   return Math.max(3, Math.ceil((height + 100) / 80));
+}
+
+// Min, average and max of a series over the drawn period. Min and max come
+// from the band (the real extremes within each hour), the average from the
+// means - every sample covers the same length of time, so a plain mean is
+// the time average.
+export function seriesStats(points) {
+  let min = null;
+  let max = null;
+  let sum = 0;
+  let n = 0;
+  let minAt = null;
+  let maxAt = null;
+  for (const p of points || []) {
+    if (p.mean === null || p.mean === undefined) continue;
+    const lo = p.min != null ? p.min : p.mean;
+    const hi = p.max != null ? p.max : p.mean;
+    if (min === null || lo < min) { min = lo; minAt = p.start; }
+    if (max === null || hi > max) { max = hi; maxAt = p.start; }
+    sum += p.mean;
+    n += 1;
+  }
+  return n ? { min, max, avg: sum / n, minAt, maxAt } : null;
 }
 
 // Series lookup that never walks the prototype chain ("__proto__", "constructor").
@@ -262,6 +291,7 @@ export class LongTermChartCard extends HTMLElement {
       fill: config.fill === true,
       fillOpacity: numberOption(config.fill_opacity, 0.35, 0, 1),
       showLegend: config.show_legend !== false,
+      showStats: config.show_stats === true,
       showPeriods: config.show_periods !== false,
       source: config.source === "influx" ? "influx" : "statistics",
       decimals: Number.isInteger(config.decimals) && config.decimals >= 0 ? config.decimals : 1,
@@ -343,6 +373,16 @@ export class LongTermChartCard extends HTMLElement {
       "  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }",
       "  .value { color: var(--primary-text-color, #c3cfdf);",
       "           font-variant-numeric: tabular-nums; }",
+      "  #stats { margin-top: 8px; border-collapse: collapse; width: 100%;",
+      "           font-family: var(--paper-font-body1_-_font-family, sans-serif);",
+      "           font-size: 12px; color: var(--secondary-text-color, #7c8ca3); }",
+      "  #stats th { font-weight: 400; text-align: right; padding: 2px 0 2px 12px; }",
+      "  #stats td { text-align: right; padding: 3px 0 3px 12px; white-space: nowrap;",
+      "              color: var(--primary-text-color, #c3cfdf); font-variant-numeric: tabular-nums;",
+      "              border-top: 1px solid var(--divider-color, #2a3547); }",
+      "  #stats th:first-child, #stats td:first-child { text-align: left; padding-left: 0; }",
+      "  #stats td:first-child { color: var(--secondary-text-color, #7c8ca3); white-space: normal; }",
+      "  #stats .dot { display: inline-block; margin-right: 6px; vertical-align: middle; }",
       "  #info { padding: 10px 0; font-size: 13px;",
       "          color: var(--secondary-text-color, #7c8ca3);",
       "          font-family: var(--paper-font-body1_-_font-family, sans-serif); }",
@@ -358,6 +398,7 @@ export class LongTermChartCard extends HTMLElement {
       '    <div id="tip"></div>',
       "  </div>",
       '  <div id="legend"></div>',
+      '  <table id="stats" hidden></table>',
       '  <div id="info"></div>',
       "</ha-card>",
     ].join("\n");
@@ -526,6 +567,7 @@ export class LongTermChartCard extends HTMLElement {
       this._series = null; // ...and no legend of the previous period on pointerleave
       this._visible = null;
       this.shadowRoot.getElementById("legend").innerHTML = "";
+      this._renderStats(null);
       info.textContent = this._t(this._config.source === "influx" ? "no_influx_data" : "no_statistics");
       return;
     }
@@ -539,6 +581,7 @@ export class LongTermChartCard extends HTMLElement {
       info.textContent = this._t("all_hidden");
       this._scale = null;
       this._renderLegend(null);
+      this._renderStats(null);
       return;
     }
     info.textContent = "";
@@ -713,6 +756,41 @@ export class LongTermChartCard extends HTMLElement {
       .map((s) => '<span class="hover-dot" style="background:' + s.color + '"></span>')
       .join("");
     this._renderLegend(null);
+    this._renderStats(visible);
+  }
+
+  // Optional table under the legend: min / avg / max of each visible series
+  // over the selected period; the extremes' times are in the cell title.
+  _renderStats(visible) {
+    const table = this.shadowRoot.getElementById("stats");
+    if (!this._config.showStats || !visible || !visible.length) {
+      table.hidden = true;
+      table.innerHTML = "";
+      return;
+    }
+    const when = (t) =>
+      new Intl.DateTimeFormat(this._lang(), {
+        weekday: "short", day: "numeric", month: "2-digit", hour: "2-digit", minute: "2-digit",
+      }).format(new Date(t));
+    const d = this._config.decimals;
+    let rows = "";
+    for (const s of visible) {
+      const st = seriesStats(s.points);
+      if (!st) continue;
+      const unit = this._unit(s.entity);
+      const fmt = (v) => formatNumber(this._lang(), v, d) + (unit ? " " + escapeHtml(unit) : "");
+      rows +=
+        '<tr data-entity="' + escapeHtml(s.entity) + '"><td><span class="dot" style="background:' + s.color +
+        '"></span>' + escapeHtml(this._label(s)) + "</td>" +
+        '<td class="min" title="' + escapeHtml(when(st.minAt)) + '">' + fmt(st.min) + "</td>" +
+        '<td class="avg">' + fmt(st.avg) + "</td>" +
+        '<td class="max" title="' + escapeHtml(when(st.maxAt)) + '">' + fmt(st.max) + "</td></tr>";
+    }
+    table.innerHTML =
+      "<thead><tr><th></th><th>" + escapeHtml(this._t("stats_min")) + "</th><th>" +
+      escapeHtml(this._t("stats_avg")) + "</th><th>" + escapeHtml(this._t("stats_max")) + "</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody>";
+    table.hidden = !rows;
   }
 
   _renderLegend(atTime) {

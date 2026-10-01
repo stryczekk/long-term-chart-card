@@ -345,6 +345,39 @@ if (shot) {
   const xf = await mount({ ...base, fill: true, entities: [{ entity: T, color: 'red" onload="window.__pwned=1' }] }, fakeHass("en"));
   check("hostile colour cannot reach the gradient", xf.shadowRoot.querySelector("linearGradient stop").getAttribute("stop-color") === "#ffc300" && !window.__pwned);
 
+  // 21. min / avg / max table
+  const ns = await mount(base, fakeHass("en"));
+  check("no stats table by default", ns.shadowRoot.getElementById("stats").hidden);
+  const st = await mount({ ...base, show_stats: true }, fakeHass("en"));
+  const tbl = st.shadowRoot.getElementById("stats");
+  check("show_stats: table visible", !tbl.hidden && getComputedStyle(tbl).display !== "none");
+  check("one row per visible series", tbl.querySelectorAll("tbody tr").length === 3, tbl.querySelectorAll("tbody tr").length);
+  check("English headers", [...tbl.querySelectorAll("th")].map((t) => t.textContent).join("|") === "|min|avg|max",
+        [...tbl.querySelectorAll("th")].map((t) => t.textContent).join("|"));
+  const row = tbl.querySelector('tr[data-entity="' + T + '"]');
+  const tp = shifted[T];
+  const exp = { min: Math.min(...tp.map((p) => p.min)), max: Math.max(...tp.map((p) => p.max)),
+                avg: tp.reduce((a, p) => a + p.mean, 0) / tp.length };
+  const num = (cls) => parseFloat(row.querySelector("." + cls).textContent);
+  check("min/avg/max match the data", Math.abs(num("min") - exp.min) < 0.051 && Math.abs(num("max") - exp.max) < 0.051 &&
+        Math.abs(num("avg") - exp.avg) < 0.051, row.textContent + " vs " + JSON.stringify(exp));
+  check("unit in the cells", row.querySelector(".avg").textContent.includes("°C"), row.querySelector(".avg").textContent);
+  check("time of the extreme in the title", row.querySelector(".max").title.length > 5, row.querySelector(".max").title);
+  st.shadowRoot.querySelector('.item[data-entity="' + O + '"]').click();
+  await tick();
+  check("hidden series leaves the table", tbl.querySelectorAll("tbody tr").length === 2, tbl.querySelectorAll("tbody tr").length);
+  const stpl = await mount({ ...base, show_stats: true }, fakeHass("pl"));
+  check("Polish headers and decimals", [...stpl.shadowRoot.querySelectorAll("#stats th")].map((t) => t.textContent).join("|") === "|min|śr.|maks." &&
+        /\d,\d/.test(stpl.shadowRoot.querySelector("#stats td.avg").textContent),
+        stpl.shadowRoot.getElementById("stats").textContent.slice(0, 80));
+  const stEmpty = await mount({ ...base, show_stats: true }, fakeHass("en", { ws: () => ({}) }));
+  check("no data -> no table", stEmpty.shadowRoot.getElementById("stats").hidden);
+  const evilS = structuredClone(fixture.states);
+  evilS[T].attributes.friendly_name = '<img src=x onerror="window.__pwned=1">';
+  const stx = await mount({ ...base, show_stats: true }, { ...fakeHass("en"), states: evilS });
+  check("hostile name in the table stays text", !stx.shadowRoot.querySelector("#stats img") && !window.__pwned &&
+        stx.shadowRoot.getElementById("stats").textContent.includes("<img"));
+
   const failed = results.filter((r) => !r.ok);
   document.getElementById("results").textContent =
     results.map((r) => (r.ok ? "PASS  " : "FAIL  ") + r.name + (r.ok ? "" : "  -> " + r.detail)).join("\n") +
