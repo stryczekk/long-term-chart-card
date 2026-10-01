@@ -102,6 +102,11 @@ entities:
 | `days` | second period button (7 with the default buttons) | period selected when the card loads |
 | `periods` | 1, 7, 30, 90, 365 days | buttons above the chart: `{ days, label }`, label optional |
 | `show_range` | `true` | draw the min/max band |
+| `band_opacity` | `0.12` | opacity of the min/max band, `0`–`1` (`0` draws no band) |
+| `line_width` | `1.8` | line thickness, `0.5`–`8` |
+| `height` | `220` | chart height in px, `80`–`1000`; the card takes more rows in a sections view |
+| `show_legend` | `true` | the legend under the chart (values and click-to-hide) |
+| `show_periods` | `true` | the period buttons; the chart stays on `days` |
 | `decimals` | `1` | decimals in the legend and tooltip |
 | `y_step` | automatic | force the grid step of the primary (left) axis; the right axis keeps its own round step on the same grid lines |
 | `y_min_step` | — | never pick a finer step on the left axis |
@@ -116,6 +121,20 @@ Entity object:
 | `name` | label (default: friendly name) |
 | `color` | a CSS colour: `#hex`, a name, `rgb()`/`hsl()` or `var(--…)`; anything else falls back to the palette of nine distinct hues |
 | `axis` | `left` (default) or `right` |
+
+A taller card without the legend and the buttons, e.g. for a wall tablet:
+
+```yaml
+type: custom:long-term-chart-card
+days: 30
+height: 320
+line_width: 2.5
+band_opacity: 0.25
+show_legend: false
+show_periods: false
+entities:
+  - sensor.outside_temperature
+```
 
 ## Where the data comes from
 

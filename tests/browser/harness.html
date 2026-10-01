@@ -266,6 +266,59 @@ if (shot) {
   } catch (e) { early = "threw: " + e.message; }
   check("hass before setConfig works", early === 3, early);
 
+  // 18. 1.1 options: defaults unchanged
+  const dflt = await mount(base, fakeHass("en"));
+  const dsvg = dflt.shadowRoot.getElementById("chart");
+  check("default height 220", dsvg.style.height === "220px" && dsvg.getAttribute("viewBox") === "0 0 600 220",
+        dsvg.style.height + " " + dsvg.getAttribute("viewBox"));
+  check("default line width 1.8", q(dflt, "polyline")[0].getAttribute("stroke-width") === "1.8",
+        q(dflt, "polyline")[0].getAttribute("stroke-width"));
+  check("default band opacity 0.12", q(dflt, "polygon")[0].getAttribute("opacity") === "0.12",
+        q(dflt, "polygon")[0].getAttribute("opacity"));
+  check("default size unchanged (4 rows)", dflt.getCardSize() === 4 && dflt.getGridOptions().rows === 4,
+        dflt.getCardSize() + "/" + dflt.getGridOptions().rows);
+
+  // 19. 1.1 options set
+  const opt = await mount({ ...base, height: 320, line_width: 3, band_opacity: 0.3 }, fakeHass("en"));
+  const osvg = opt.shadowRoot.getElementById("chart");
+  check("height: 320 px and viewBox", osvg.style.height === "320px" && osvg.getAttribute("viewBox") === "0 0 600 320",
+        osvg.style.height + " " + osvg.getAttribute("viewBox"));
+  check("height: plotted inside the taller chart",
+        [...q(opt, "polyline")].flatMap((pl) => pl.getAttribute("points").trim().split(/\s+/).map((pt) => Number(pt.split(",")[1])))
+          .every((y) => y >= 0 && y <= 320));
+  check("height: card size grows", opt.getGridOptions().rows > 4, opt.getGridOptions().rows);
+  check("line_width: 3", [...q(opt, "polyline")].every((pl) => pl.getAttribute("stroke-width") === "3"));
+  check("band_opacity: 0.3", [...q(opt, "polygon")].every((pg) => pg.getAttribute("opacity") === "0.3"));
+  const orect = osvg.getBoundingClientRect();
+  osvg.dispatchEvent(new PointerEvent("pointermove", { clientX: orect.left + orect.width * 0.5, clientY: orect.top + 60, bubbles: true }));
+  await tick();
+  const odot = opt.shadowRoot.querySelector(".hover-dot");
+  check("height: hover dot inside the chart", odot && parseFloat(odot.style.top) >= 0 && parseFloat(odot.style.top) <= orect.height,
+        odot && odot.style.top + " of " + orect.height);
+
+  const clamp = await mount({ ...base, height: 5, line_width: "fat", band_opacity: 7 }, fakeHass("en"));
+  check("invalid values clamped / defaulted", clamp.shadowRoot.getElementById("chart").style.height === "80px" &&
+        q(clamp, "polyline")[0].getAttribute("stroke-width") === "1.8" && q(clamp, "polygon")[0].getAttribute("opacity") === "1",
+        clamp.shadowRoot.getElementById("chart").style.height + " " + q(clamp, "polyline")[0].getAttribute("stroke-width"));
+
+  const noBand = await mount({ ...base, band_opacity: 0 }, fakeHass("en"));
+  check("band_opacity 0 draws no band", q(noBand, "polygon").length === 0 && q(noBand, "polyline").length === 3,
+        q(noBand, "polygon").length);
+
+  const bare = await mount({ ...base, title: "", show_legend: false, show_periods: false }, fakeHass("en"));
+  const vis = (el, id) => getComputedStyle(el.shadowRoot.getElementById(id)).display !== "none";
+  check("show_legend false hides the legend", !vis(bare, "legend"));
+  check("show_periods false hides the buttons", !vis(bare, "periods"));
+  check("no title and no buttons -> no empty header", !vis(bare, "head"));
+  check("still draws without legend and buttons", q(bare, "polyline").length === 3, q(bare, "polyline").length);
+  const brect = bare.shadowRoot.getElementById("chart").getBoundingClientRect();
+  bare.shadowRoot.getElementById("chart").dispatchEvent(new PointerEvent("pointermove",
+    { clientX: brect.left + brect.width / 2, clientY: brect.top + 40, bubbles: true }));
+  await tick();
+  check("tooltip still works without legend", bare.shadowRoot.getElementById("tip").classList.contains("on"));
+  const titled = await mount({ ...base, show_periods: false }, fakeHass("en"));
+  check("title stays when only buttons are hidden", vis(titled, "head") && vis(titled, "title") && !vis(titled, "periods"));
+
   const failed = results.filter((r) => !r.ok);
   document.getElementById("results").textContent =
     results.map((r) => (r.ok ? "PASS  " : "FAIL  ") + r.name + (r.ok ? "" : "  -> " + r.detail)).join("\n") +

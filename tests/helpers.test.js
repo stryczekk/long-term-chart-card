@@ -162,3 +162,22 @@ test("getStubConfig picks entities with statistics", () => {
   } };
   assert.deepEqual(card.LongTermChartCard.getStubConfig(hass).entities, ["sensor.t"]);
 });
+
+test("numberOption: default for unusable values, clamped otherwise", () => {
+  assert.equal(card.numberOption(undefined, 220, 80, 1000), 220);
+  assert.equal(card.numberOption(null, 220, 80, 1000), 220);
+  assert.equal(card.numberOption("", 220, 80, 1000), 220);
+  assert.equal(card.numberOption("tall", 220, 80, 1000), 220);
+  assert.equal(card.numberOption(NaN, 220, 80, 1000), 220);
+  assert.equal(card.numberOption(300, 220, 80, 1000), 300);
+  assert.equal(card.numberOption("300", 220, 80, 1000), 300);
+  assert.equal(card.numberOption(10, 220, 80, 1000), 80);
+  assert.equal(card.numberOption(5000, 220, 80, 1000), 1000);
+  assert.equal(card.numberOption(0, 0.12, 0, 1), 0); // zero is a value, not "missing"
+});
+
+test("gridRows: default height keeps the 1.0 size, taller charts take more rows", () => {
+  assert.equal(card.gridRows(220), 4);
+  assert.equal(card.gridRows(80), 3);
+  assert.ok(card.gridRows(500) > card.gridRows(220));
+});

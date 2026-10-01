@@ -17,12 +17,13 @@
 //       name: Bedroom
 //     - entity: sensor.bedroom_humidity
 //       axis: right       # second scale; its grid is aligned to the left one
+//   height: 300           # chart height in px (default 220)
 //
 // See README.md for all options.
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -108,6 +109,19 @@ export function decimalsFor(step) {
 const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,30}|(rgb|rgba|hsl|hsla)\([0-9.,%\s/deg]+\)|var\(--[a-zA-Z0-9_-]+\))$/;
 export function safeColor(value, fallback) {
   return typeof value === "string" && COLOR_RE.test(value.trim()) ? value.trim() : fallback;
+}
+
+// Numeric option clamped to a sane range; anything unusable -> the default.
+export function numberOption(value, fallback, min, max) {
+  const n = Number(value);
+  if (value === null || value === undefined || value === "" || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+// Card size for a chart of this height plus title, legend and padding
+// (about 100 px). 80 px per unit keeps the 1.0 default of 4 rows at 220 px.
+export function gridRows(height) {
+  return Math.max(3, Math.ceil((height + 100) / 80));
 }
 
 // Series lookup that never walks the prototype chain ("__proto__", "constructor").
@@ -241,6 +255,11 @@ export class LongTermChartCard extends HTMLElement {
       // keeping the data centred.
       yMinIntervals: Number(config.y_min_intervals) > 0 ? Math.round(Number(config.y_min_intervals)) : 0,
       showRange: config.show_range !== false,
+      height: Math.round(numberOption(config.height, 220, 80, 1000)),
+      lineWidth: numberOption(config.line_width, 1.8, 0.5, 8),
+      bandOpacity: numberOption(config.band_opacity, 0.12, 0, 1),
+      showLegend: config.show_legend !== false,
+      showPeriods: config.show_periods !== false,
       source: config.source === "influx" ? "influx" : "statistics",
       decimals: Number.isInteger(config.decimals) && config.decimals >= 0 ? config.decimals : 1,
       periods: periods,
@@ -342,6 +361,9 @@ export class LongTermChartCard extends HTMLElement {
     const titleEl = this.shadowRoot.getElementById("title");
     titleEl.textContent = this._config.title;
     if (!this._config.title) titleEl.style.display = "none";
+    if (!this._config.showPeriods) this.shadowRoot.getElementById("periods").style.display = "none";
+    if (!this._config.title && !this._config.showPeriods) this.shadowRoot.getElementById("head").style.display = "none";
+    if (!this._config.showLegend) this.shadowRoot.getElementById("legend").style.display = "none";
     this._renderPeriods();
     this._attachCursor();
     this._attachLegendToggle();
@@ -518,7 +540,7 @@ export class LongTermChartCard extends HTMLElement {
     info.textContent = "";
 
     const WIDTH = 600;
-    const HEIGHT = 220;
+    const HEIGHT = this._config.height;
     const TOP = 8;
     const BOTTOM = 22;
     const leftSeries = visible.filter((s) => s.axis !== "right");
@@ -623,7 +645,7 @@ export class LongTermChartCard extends HTMLElement {
 
     for (const s of visible) {
       const y = yOf(s);
-      if (this._config.showRange && s.points.some((p) => p.min != null)) {
+      if (this._config.showRange && this._config.bandOpacity > 0 && s.points.some((p) => p.min != null)) {
         const upper = s.points.map(
           (p) => x(p.start) + "," + y(p.max != null ? p.max : p.mean)
         );
@@ -633,7 +655,7 @@ export class LongTermChartCard extends HTMLElement {
           .map((p) => x(p.start) + "," + y(p.min != null ? p.min : p.mean));
         out +=
           '<polygon points="' + upper.concat(lower).join(" ") + '" fill="' +
-          s.color + '" opacity="0.12"/>';
+          s.color + '" opacity="' + this._config.bandOpacity + '"/>';
       }
       // one sample: a short dash, a one-point polyline draws nothing
       const line = s.points.length === 1
@@ -642,7 +664,7 @@ export class LongTermChartCard extends HTMLElement {
         : s.points.map((p) => x(p.start) + "," + y(p.mean)).join(" ");
       out +=
         '<polyline points="' + line + '" fill="none" stroke="' + s.color +
-        '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>';
+        '" stroke-width="' + this._config.lineWidth + '" stroke-linejoin="round" stroke-linecap="round"/>';
     }
     out +=
       '<line id="cursor" x1="0" y1="' + TOP + '" x2="0" y2="' + (HEIGHT - BOTTOM) +
@@ -650,7 +672,7 @@ export class LongTermChartCard extends HTMLElement {
       ' opacity="0" pointer-events="none"/>';
 
     svg.setAttribute("viewBox", "0 0 " + WIDTH + " " + HEIGHT);
-    svg.style.height = "220px";
+    svg.style.height = HEIGHT + "px";
     svg.innerHTML = out;
     this._scale = {
       x: x, tMin: tMin, tMax: tMax, width: WIDTH, height: HEIGHT,
@@ -801,12 +823,12 @@ export class LongTermChartCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 4;
+    return gridRows(this._config ? this._config.height : 220);
   }
 
   // Sections view (HA 2024.11+): full width by default.
   getGridOptions() {
-    return { columns: 12, min_columns: 6, rows: 4, min_rows: 3 };
+    return { columns: 12, min_columns: 6, rows: gridRows(this._config ? this._config.height : 220), min_rows: 3 };
   }
 
   // Card picker preview: up to two numeric entities that have statistics.
