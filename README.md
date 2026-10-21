@@ -99,6 +99,31 @@ entities:
   - sensor.living_room_temperature
 ```
 
+### Events — what was going on
+
+Temperature with what moved it: bands while the heating ran or a window
+was open, dashed lines for moments such as the doorbell. A thin lane at the
+bottom keeps overlapping events apart; the tooltip and the legend say what
+was active.
+
+![Temperature with heating, a window and the doorbell](docs/events.png)
+
+```yaml
+type: custom:long-term-chart-card
+title: Living room
+entities:
+  - sensor.living_room_temperature
+events:
+  - entity: climate.living_room
+    attribute: hvac_action          # the state is just "heat" - what it does is here
+    states: [heating]
+  - binary_sensor.living_room_window  # active = anything but off/closed/idle/...
+  - entity: cover.living_room_south
+    states: [closed]                  # covers: closed is the interesting part
+    name: Blinds down
+  - event.doorbell                    # event, button, input_button, scene: a line per press
+```
+
 ## Options
 
 | Option | Default | Description |
@@ -122,6 +147,8 @@ entities:
 | `y_min_step` | — | never pick a finer step on the left axis |
 | `y_min_step_right` | — | the same for the right axis |
 | `y_min_intervals` | — | widen the range to at least this many grid intervals |
+| `events` | — | list of entity ids, or objects (see below): bands while active, lines for moments |
+| `event_opacity` | `0.15` | opacity of the event bands over the whole chart height, `0`–`1` (`0`: only the lanes at the bottom) |
 
 Entity object:
 
@@ -132,6 +159,21 @@ Entity object:
 | `color` | a CSS colour: `#hex`, a name, `rgb()`/`hsl()` or `var(--…)`; anything else falls back to the palette of nine distinct hues |
 | `axis` | `left` (default) or `right` |
 | `fill` | fill under this line (overrides the card-wide `fill`) |
+
+Event object:
+
+| Key | Description |
+|---|---|
+| `entity` | entity id — any domain |
+| `attribute` | use this attribute instead of the state, e.g. `hvac_action` of a `climate` entity |
+| `states` | the values that count as active; default: anything but `off`, `closed`, `idle`, `not_home`, `standby`, `unavailable`, `unknown`, `none` |
+| `mode` | `band` (default) or `marker` (a line at every change); `event`, `button`, `input_button` and `scene` entities are markers by default |
+| `name` | label (default: friendly name) |
+| `color` | as for entities; default: the next palette colour after the series |
+
+Bands closer than 2 pixels are joined, so a presence sensor that flips
+every few minutes reads as one block over a week. Click an event in the
+legend to hide it.
 
 A taller card without the legend and the buttons, e.g. for a wall tablet:
 
@@ -155,6 +197,12 @@ entities:
 - **`source: influx`** — `GET /api/influx_proxy/series`, served by the
   [InfluxDB Proxy][proxy] integration; aggregation step chosen for the range.
 
+Events come from the same place: **`statistics`** — the recorder's history
+(`history/history_during_period`), so as far back as the recorder keeps it
+(10 days by default); **`influx`** — `GET /api/influx_proxy/states`, as far
+back as InfluxDB goes. A text attribute is stored by the `influxdb`
+integration as `<name>_str`; the card asks for both forms.
+
 Data refreshes every 5 minutes, not on every state change.
 
 ## Development
@@ -171,7 +219,9 @@ cleaned of direct-sun spikes on the outdoor sensor) and checks lines, the
 min/max band, both axes, the legend toggle, the tooltip, period switching,
 locale formatting, the InfluxDB error paths, HTML injection through
 `friendly_name`, units, names and colours, detach/re-attach, repeated
-`setConfig`, out-of-order responses, wide right-axis ranges and single samples.
+`setConfig`, out-of-order responses, wide right-axis ranges and single samples,
+and events (bands, lanes, markers, legend, tooltip, both sources, a failed history call).
+`tests/browser/run.sh --shot` also writes `docs/events.png` from made-up events.
 
 ## Support
 

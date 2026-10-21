@@ -203,3 +203,67 @@ test("seriesStats: without a band, empty and null means", () => {
   assert.equal(card.seriesStats(null), null);
   assert.equal(card.seriesStats([{ start: 1, mean: null }]), null);
 });
+
+test("normalizeEvents: strings and objects, palette after the series, moments by domain", () => {
+  const ev = card.normalizeEvents([
+    "binary_sensor.window",
+    { entity: "climate.living_room", attribute: "hvac_action", states: ["heating", "cooling"], name: "AC", color: "#4fc3f7" },
+    { entity: "event.doorbell" },
+    { entity: "bad id" },
+    { entity: "switch.x", attribute: "x\" onload=", color: "red;background:url(x)" },
+  ], 3);
+  assert.equal(ev.length, 4);
+  assert.deepEqual(ev.map((e) => e.key), ["event:0", "event:1", "event:2", "event:3"]);
+  assert.equal(ev[0].color, card.COLORS[3]);
+  assert.equal(ev[0].mode, "band");
+  assert.equal(ev[1].attribute, "hvac_action");
+  assert.ok(ev[1].states.has("cooling"));
+  assert.equal(ev[2].mode, "marker");
+  assert.equal(ev[3].attribute, null); // unsafe attribute name dropped
+  assert.equal(ev[3].color, card.COLORS[(3 + 4) % card.COLORS.length]); // unsafe colour -> palette
+  assert.deepEqual(card.normalizeEvents(undefined), []);
+});
+
+test("eventSpans: active periods cut to the range, row before the range counts", () => {
+  const [win] = card.normalizeEvents(["binary_sensor.window"]);
+  const rows = [[50, "on"], [120, "off"], [150, "on"], [170, "on"], [180, "off"], [190, "on"]];
+  assert.deepEqual(card.eventSpans(win, rows, 100, 200), [
+    { from: 100, to: 120, value: "on" },
+    { from: 150, to: 180, value: "on" },
+    { from: 190, to: 200, value: "on" },
+  ]);
+  // explicit states; quiet ones by default include unavailable
+  const [ac] = card.normalizeEvents([{ entity: "climate.ac", states: ["cooling"] }]);
+  assert.deepEqual(card.eventSpans(ac, [[0, "idle"], [10, "cooling"], [20, "heating"]], 0, 30), [{ from: 10, to: 20, value: "cooling" }]);
+  assert.deepEqual(card.eventSpans(win, [[0, "unavailable"], [10, "unknown"]], 0, 30), []);
+});
+
+test("eventMarkers: moments inside the range", () => {
+  const [bell] = card.normalizeEvents(["event.doorbell"]);
+  const rows = [[5, "2026-10-21T10:00:00"], [15, "2026-10-21T11:00:00"], [25, "2026-10-21T12:00:00"]];
+  assert.deepEqual(card.eventMarkers(bell, rows, 10, 20).map((m) => m.at), [15]);
+});
+
+test("historyRows: compressed history, attributes carried over, repeats merged", () => {
+  const states = [
+    { s: "heat_cool", a: { hvac_action: "idle" }, lc: 100 },
+    { s: "heat_cool", a: { hvac_action: "cooling" }, lu: 160, lc: 100 },
+    { s: "heat_cool", lu: 170 }, // attributes left out when unchanged
+    { s: "off", a: { hvac_action: "off" }, lu: 200 },
+  ];
+  assert.deepEqual(card.historyRows(states, "hvac_action"), [[100000, "idle"], [160000, "cooling"], [200000, "off"]]);
+  assert.deepEqual(card.historyRows(states, null), [[100000, "heat_cool"], [200000, "off"]]);
+});
+
+test("influxRows: the _str attribute first, then the numeric one", () => {
+  const rows = [[1, "cool", "cooling", null], [2, "cool", null, 7], [3, "off", "off", null]];
+  assert.deepEqual(card.influxRows(rows, "hvac_action"), [[1, "cooling"], [2, 7], [3, "off"]]);
+  assert.deepEqual(card.influxRows([[1, "on"], [2, "on"], [3, "off"]], null), [[1, "on"], [3, "off"]]);
+});
+
+test("mergeSpans: joins spans separated by less than the gap", () => {
+  const spans = [{ from: 0, to: 10, value: "on" }, { from: 11, to: 20, value: "on" }, { from: 40, to: 50, value: "on" }];
+  assert.deepEqual(card.mergeSpans(spans, 2).map((s) => [s.from, s.to]), [[0, 20], [40, 50]]);
+  assert.deepEqual(card.mergeSpans(spans, 0).length, 3);
+  assert.equal(spans[0].to, 10); // input untouched
+});

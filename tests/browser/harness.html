@@ -60,7 +60,39 @@ const H = "sensor.living_room_humidity";
 const base = { type: "custom:long-term-chart-card", title: "Temperatures", days: 7,
   entities: [T, O, { entity: H, axis: "right" }] };
 
-if (shot) {
+const shotMode = new URLSearchParams(location.search).get("shot");
+if (shotMode === "events") {
+  // made-up events on the fixture week: heating in the mornings, a window open twice, the doorbell
+  const now = Date.now();
+  const DAY = 864e5;
+  const day0 = new Date(now - 7 * DAY); day0.setHours(0, 0, 0, 0);
+  const heat = [{ s: "heat", a: { hvac_action: "idle" }, lc: (now - 8 * DAY) / 1000 }];
+  for (let d = 0; d < 8; d++) {
+    const morning = day0.getTime() + d * DAY + 5.5 * 3600e3;
+    heat.push({ s: "heat", a: { hvac_action: "heating" }, lu: morning / 1000 });
+    heat.push({ s: "heat", a: { hvac_action: "idle" }, lu: (morning + 2.5 * 3600e3) / 1000 });
+  }
+  const win = [{ s: "off", lc: (now - 8 * DAY) / 1000 }];
+  for (const [d, h, len] of [[1.5, 14, 1.5], [4.4, 12, 3]]) {
+    win.push({ s: "on", lu: (day0.getTime() + d * DAY + h * 3600e3) / 1000 - 0.5 * DAY / 1000 });
+    win.push({ s: "off", lu: (day0.getTime() + d * DAY + (h + len) * 3600e3) / 1000 - 0.5 * DAY / 1000 });
+  }
+  const bell = [{ s: "x", lc: (now - 8 * DAY) / 1000 }, { s: "y", lu: (now - 2.3 * DAY) / 1000 }, { s: "z", lu: (now - 5.7 * DAY) / 1000 }];
+  const history = { "climate.living_room": heat, "binary_sensor.living_room_window": win, "event.doorbell": bell };
+  const states = { ...fixture.states,
+    "climate.living_room": { entity_id: "climate.living_room", state: "heat", attributes: { friendly_name: "Heating" } },
+    "binary_sensor.living_room_window": { entity_id: "binary_sensor.living_room_window", state: "off", attributes: { friendly_name: "Window" } },
+    "event.doorbell": { entity_id: "event.doorbell", state: "y", attributes: { friendly_name: "Doorbell" } } };
+  await mount({ type: "custom:long-term-chart-card", title: "Living room", days: 7, show_periods: false, y_min_step: 1,
+    entities: [T],
+    events: [
+      { entity: "climate.living_room", attribute: "hvac_action", states: ["heating"], color: "#ff8a65" },
+      { entity: "binary_sensor.living_room_window", color: "#4fc3f7" },
+      { entity: "event.doorbell", color: "#ba68c8" }] },
+    { ...fakeHass("en", { ws: (msg) => (msg.type === "history/history_during_period" ? history : shifted) }), states });
+  await tick(200);
+  document.getElementById("results").remove();
+} else if (shot) {
   await mount({ ...base, y_min_step: 1 }, fakeHass("en"));
   document.getElementById("results").remove();
 } else {
@@ -377,6 +409,69 @@ if (shot) {
   const stx = await mount({ ...base, show_stats: true }, { ...fakeHass("en"), states: evilS });
   check("hostile name in the table stays text", !stx.shadowRoot.querySelector("#stats img") && !window.__pwned &&
         stx.shadowRoot.getElementById("stats").textContent.includes("<img"));
+
+  // 22. events: bands, lanes, markers, legend, tooltip, both sources, failure
+  const now = Date.now();
+  const sec = (msAgo) => (now - msAgo) / 1000;
+  const DAY = 864e5;
+  const history = (msg) => {
+    if (msg.type !== "history/history_during_period") return shifted;
+    const out = {};
+    if (msg.entity_ids.includes("binary_sensor.window")) out["binary_sensor.window"] = [
+      { s: "off", lc: sec(8 * DAY) }, { s: "on", lu: sec(3 * DAY) }, { s: "off", lu: sec(2 * DAY) }];
+    if (msg.entity_ids.includes("climate.ac")) out["climate.ac"] = [
+      { s: "cool", a: { hvac_action: "idle" }, lc: sec(8 * DAY) },
+      { s: "cool", a: { hvac_action: "cooling" }, lu: sec(5 * DAY) },
+      { s: "cool", a: { hvac_action: "idle" }, lu: sec(4 * DAY) }];
+    if (msg.entity_ids.includes("event.doorbell")) out["event.doorbell"] = [
+      { s: "2026-01-01T00:00:00", lc: sec(8 * DAY) }, { s: "2026-01-02T00:00:00", lu: sec(1 * DAY) }];
+    return out;
+  };
+  const evCfg = { ...base, entities: [T], events: [
+    { entity: "binary_sensor.window", name: "Window" },
+    { entity: "climate.ac", attribute: "hvac_action", states: ["cooling"], name: "AC" },
+    { entity: "event.doorbell", name: "Doorbell" }] };
+  const evHass = fakeHass("en", { ws: history });
+  const ev = await mount(evCfg, evHass);
+  await tick(100);
+  check("events: a band per active period", q(ev, ".event-band").length === 2, q(ev, ".event-band").length);
+  check("events: a lane per band", q(ev, ".event-lane").length === 2, q(ev, ".event-lane").length);
+  check("events: a marker for the doorbell", q(ev, ".event-marker").length === 1, q(ev, ".event-marker").length);
+  const lanes = [...q(ev, ".event-lane")].map((r) => r.getAttribute("y"));
+  check("events: lanes do not overlap", new Set(lanes).size === 2, lanes.join(","));
+  const histCalls = evHass.calls.filter((c) => c.type === "history/history_during_period");
+  check("events: plain history without attributes, attribute events with them",
+        histCalls.length === 2 && histCalls.some((c) => c.no_attributes && c.entity_ids.join() === "binary_sensor.window,event.doorbell")
+          && histCalls.some((c) => !c.no_attributes && c.entity_ids.join() === "climate.ac"), JSON.stringify(histCalls));
+  check("events: in the legend after the series", q(ev, ".item.event").length === 3 && q(ev, ".item").length === 4, q(ev, ".item").length);
+  const band = [...q(ev, ".event-band")].find((b) => Number(b.getAttribute("x")) > 300); // the window, 3..2 days ago
+  const evSvg = ev.shadowRoot.getElementById("chart");
+  const er = evSvg.getBoundingClientRect();
+  const midX = Number(band.getAttribute("x")) + Number(band.getAttribute("width")) / 2;
+  evSvg.dispatchEvent(new PointerEvent("pointermove", { clientX: er.left + (midX / 600) * er.width, clientY: er.top + 50, bubbles: true }));
+  await tick();
+  const evTip = ev.shadowRoot.getElementById("tip").textContent;
+  check("events: tooltip names the active event", evTip.includes("Window") && evTip.includes("on") && !evTip.includes("AC"), evTip);
+  ev.shadowRoot.querySelector('.item[data-entity="event:0"]').click();
+  await tick();
+  check("events: legend click hides the event", q(ev, ".event-band").length === 1 && q(ev, ".item.event.off").length === 1,
+        q(ev, ".event-band").length);
+  const evFail = await mount(evCfg, fakeHass("en", { ws: (msg) => {
+    if (msg.type === "history/history_during_period") throw new Error("history down");
+    return shifted;
+  } }));
+  check("events: a failure keeps the chart and says why", q(evFail, "polyline").length === 1 &&
+        evFail.shadowRoot.getElementById("info").textContent.includes("history down"),
+        evFail.shadowRoot.getElementById("info").textContent);
+  const evInflux = fakeHass("en", { api: (method, path) => path.startsWith("influx_proxy/states")
+    ? { "climate.ac": [[now - 5 * DAY, "cool", "cooling", null], [now - 4 * DAY, "cool", "idle", null]] }
+    : { [T]: shifted[T] } });
+  const evi = await mount({ ...evCfg, source: "influx", events: [{ entity: "climate.ac", attribute: "hvac_action", states: ["cooling"] }] }, evInflux);
+  await tick(100);
+  const statesCall = evInflux.calls.find((c) => c.path && c.path.startsWith("influx_proxy/states"));
+  check("events (influx): /states with the _str and plain attribute",
+        statesCall && statesCall.path.includes("attributes=" + encodeURIComponent("hvac_action_str,hvac_action")), JSON.stringify(statesCall));
+  check("events (influx): band drawn", q(evi, ".event-band").length === 1, q(evi, ".event-band").length);
 
   const failed = results.filter((r) => !r.ok);
   document.getElementById("results").textContent =

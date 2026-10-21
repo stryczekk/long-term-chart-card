@@ -18,12 +18,16 @@
 //     - entity: sensor.bedroom_humidity
 //       axis: right       # second scale; its grid is aligned to the left one
 //   height: 300           # chart height in px (default 220)
+//   events:               # what was going on: bands while active, markers for moments
+//     - entity: climate.living_room
+//       attribute: hvac_action
+//       states: [heating, cooling]
 //
 // See README.md for all options.
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -51,6 +55,7 @@ export const STRINGS = {
     stats_min: "min",
     stats_avg: "avg",
     stats_max: "max",
+    events_failed: "Could not load the events: {reason}",
     card_name: "Long-term chart",
     card_description: "Chart from long-term statistics or from InfluxDB",
   },
@@ -73,6 +78,7 @@ export const STRINGS = {
     stats_min: "min",
     stats_avg: "śr.",
     stats_max: "maks.",
+    events_failed: "Nie udało się pobrać zdarzeń: {reason}",
     card_name: "Wykres długoterminowy",
     card_description: "Wykres ze statystyk długoterminowych albo z InfluxDB",
   },
@@ -151,6 +157,117 @@ export function seriesStats(points) {
     n += 1;
   }
   return n ? { min, max, avg: sum / n, minAt, maxAt } : null;
+}
+
+// ---- Events: bands while an entity is "active", markers for moments -------
+
+// States that mean "nothing going on" when an event entity lists no `states`.
+export const QUIET_STATES = new Set([
+  "off", "closed", "idle", "not_home", "standby", "unavailable", "unknown", "none", "",
+]);
+// Domains whose every state change is a moment, not a period.
+export const MOMENT_DOMAINS = new Set(["event", "button", "input_button", "scene"]);
+
+// The `events` option, normalised; colours continue the palette after the series.
+export function normalizeEvents(list, offset = 0) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  list.forEach((item, index) => {
+    const entity = typeof item === "string" ? item : item && item.entity;
+    if (typeof entity !== "string" || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(entity)) return;
+    const cfg = typeof item === "string" ? {} : item;
+    const states = Array.isArray(cfg.states) ? cfg.states.map((v) => String(v)) : null;
+    const attribute = typeof cfg.attribute === "string" && /^[a-z0-9_]{1,60}$/.test(cfg.attribute) ? cfg.attribute : null;
+    const domain = entity.split(".")[0];
+    out.push({
+      key: "event:" + out.length,
+      entity: entity,
+      name: cfg.name || null,
+      color: safeColor(cfg.color, COLORS[(offset + index) % COLORS.length]),
+      attribute: attribute,
+      states: states && states.length ? new Set(states) : null,
+      mode: cfg.mode === "marker" || cfg.mode === "band" ? cfg.mode : MOMENT_DOMAINS.has(domain) ? "marker" : "band",
+    });
+  });
+  return out;
+}
+
+export function isActive(event, value) {
+  if (value === null || value === undefined) return false;
+  const text = String(value);
+  return event.states ? event.states.has(text) : !QUIET_STATES.has(text.toLowerCase());
+}
+
+// Rows [ms, value] (oldest first, the first one may lie before `start`) as
+// periods in which the event was active, cut to [start, end].
+export function eventSpans(event, rows, start, end) {
+  const spans = [];
+  let from = null;
+  let value = null;
+  for (const [t, v] of rows || []) {
+    const active = isActive(event, v);
+    if (active && from === null) {
+      from = t;
+      value = v;
+    } else if (!active && from !== null) {
+      if (t > start) spans.push({ from: Math.max(from, start), to: Math.min(t, end), value: value });
+      from = null;
+    } else if (active) {
+      value = v; // still active, e.g. heating -> heating with a new attribute
+    }
+  }
+  if (from !== null && from < end) spans.push({ from: Math.max(from, start), to: end, value: value });
+  return spans.filter((s) => s.to > s.from);
+}
+
+// Spans closer than `gap` joined: a presence sensor that flips every few
+// minutes would otherwise draw hundreds of slivers on a week-long chart.
+export function mergeSpans(spans, gap) {
+  const out = [];
+  for (const span of spans) {
+    const last = out[out.length - 1];
+    if (last && span.from - last.to <= gap) last.to = Math.max(last.to, span.to);
+    else out.push({ ...span });
+  }
+  return out;
+}
+
+// Moments: every change inside [start, end] that counts as active.
+export function eventMarkers(event, rows, start, end) {
+  return (rows || [])
+    .filter(([t, v]) => t >= start && t <= end && (event.states ? event.states.has(String(v)) : v !== null && v !== undefined))
+    .map(([t, v]) => ({ at: t, value: v }));
+}
+
+// Home Assistant's history/history_during_period answer (compressed states:
+// s = state, a = attributes, lu / lc = last updated / changed in seconds) as rows.
+export function historyRows(states, attribute) {
+  const rows = [];
+  for (const st of states || []) {
+    const t = Math.round(((st.lu !== undefined ? st.lu : st.lc) || 0) * 1000);
+    let value = st.s;
+    if (attribute) {
+      if (st.a && Object.prototype.hasOwnProperty.call(st.a, attribute)) value = st.a[attribute];
+      else if (rows.length) value = rows[rows.length - 1][1]; // attributes left out when unchanged
+      else value = null;
+    }
+    if (rows.length && rows[rows.length - 1][1] === value) continue;
+    rows.push([t, value]);
+  }
+  return rows;
+}
+
+// InfluxDB Proxy /states rows [ms, state, ...attributes] as rows. A text
+// attribute is stored by the influxdb integration as "<name>_str", a number as
+// "<name>": both are asked for, the text one first.
+export function influxRows(rows, attribute) {
+  const out = [];
+  for (const r of rows || []) {
+    const value = attribute ? (r[2] !== null && r[2] !== undefined ? r[2] : r[3] !== undefined ? r[3] : null) : r[1];
+    if (out.length && out[out.length - 1][1] === value) continue;
+    out.push([r[0], value]);
+  }
+  return out;
 }
 
 // Series lookup that never walks the prototype chain ("__proto__", "constructor").
@@ -296,6 +413,8 @@ export class LongTermChartCard extends HTMLElement {
       source: config.source === "influx" ? "influx" : "statistics",
       decimals: Number.isInteger(config.decimals) && config.decimals >= 0 ? config.decimals : 1,
       periods: periods,
+      events: normalizeEvents(config.events, config.entities.length),
+      eventOpacity: numberOption(config.event_opacity, 0.15, 0, 1),
       entities: config.entities.map((item, index) =>
         typeof item === "string"
           ? { entity: item, name: null, color: COLORS[index % COLORS.length], axis: "left", fill: config.fill === true }
@@ -310,6 +429,9 @@ export class LongTermChartCard extends HTMLElement {
     };
     this._days = this._config.days;
     this._data = null;
+    this._eventRows = null; // per event: rows [ms, value], or null
+    this._eventsError = null;
+    this._eventsDrawn = null;
     this._series = null; // nothing from a previous config may be hovered or redrawn
     this._visible = null;
     this._scale = null;
@@ -371,6 +493,9 @@ export class LongTermChartCard extends HTMLElement {
       "                   box-shadow: inset 0 0 0 2px currentColor; }",
       "  .item.off .value { text-decoration: line-through; }",
       "  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }",
+      "  .swatch { width: 12px; height: 8px; border-radius: 2px; flex: none; opacity: 0.75; }",
+      "  .item.off .swatch { background: transparent !important;",
+      "                      box-shadow: inset 0 0 0 1.5px currentColor; }",
       "  .value { color: var(--primary-text-color, #c3cfdf);",
       "           font-variant-numeric: tabular-nums; }",
       "  #stats { margin-top: 8px; border-collapse: collapse; width: 100%;",
@@ -489,11 +614,51 @@ export class LongTermChartCard extends HTMLElement {
     // Only the newest request may draw: switching 7d -> 24h -> 7d leaves two
     // 7-day requests in flight, and comparing `days` would let the older win.
     const request = (this._request = (this._request || 0) + 1);
-    if (this._config.source === "influx") return this._fetchInflux(request);
-    return this._fetchHaStatistics(request);
+    // Events load alongside the series and are drawn with them; they never fail the chart.
+    const events = this._fetchEvents(Date.now() - this._days * 864e5, Date.now());
+    if (this._config.source === "influx") return this._fetchInflux(request, events);
+    return this._fetchHaStatistics(request, events);
   }
 
-  async _fetchInflux(request) {
+  // Rows per event, from the same place as the series: the recorder's history
+  // for statistics (as far back as it keeps it), InfluxDB Proxy /states for influx.
+  async _fetchEvents(start, end) {
+    const events = this._config.events;
+    if (!events.length || !this._hass) return [];
+    try {
+      if (this._config.source === "influx") {
+        return await Promise.all(events.map(async (e) => {
+          const path =
+            "influx_proxy/states?entities=" + encodeURIComponent(e.entity) + "&days=" + this._days +
+            (e.attribute ? "&attributes=" + encodeURIComponent(e.attribute + "_str," + e.attribute) : "");
+          const data = (await this._hass.callApi("get", path)) || {};
+          return influxRows(ownPoints(data, e.entity), e.attribute);
+        }));
+      }
+      const ask = async (list, withAttributes) => {
+        if (!list.length) return {};
+        return (await this._hass.callWS({
+          type: "history/history_during_period",
+          start_time: new Date(start).toISOString(),
+          end_time: new Date(end).toISOString(),
+          entity_ids: Array.from(new Set(list.map((e) => e.entity))),
+          minimal_response: !withAttributes,
+          no_attributes: !withAttributes,
+          significant_changes_only: false,
+        })) || {};
+      };
+      const [plain, detailed] = await Promise.all([
+        ask(events.filter((e) => !e.attribute), false),
+        ask(events.filter((e) => e.attribute), true),
+      ]);
+      return events.map((e) => historyRows(ownPoints(e.attribute ? detailed : plain, e.entity), e.attribute));
+    } catch (err) {
+      this._eventsError = (err && err.body && err.body.message) || (err && err.message) || String(err);
+      return null;
+    }
+  }
+
+  async _fetchInflux(request, events) {
     // We do NOT query InfluxDB straight from the browser. That would only
     // work on the home network - through a tunnel pointing at HA the
     // browser cannot reach a separate database host. So we ask HA, and HA
@@ -505,8 +670,10 @@ export class LongTermChartCard extends HTMLElement {
       "&days=" + this._days;
     try {
       const data = (await this._hass.callApi("get", path)) || {};
+      const eventRows = await events;
       if (request !== this._request) return; // a newer request was made meanwhile
       this._data = data;
+      this._setEvents(eventRows);
       this._draw();
     } catch (err) {
       if (request !== this._request) return;
@@ -517,7 +684,7 @@ export class LongTermChartCard extends HTMLElement {
     }
   }
 
-  async _fetchHaStatistics(request) {
+  async _fetchHaStatistics(request, events) {
     const end = new Date();
     const start = new Date(end.getTime() - this._days * 864e5);
     const period = statisticsPeriod(this._days);
@@ -530,14 +697,21 @@ export class LongTermChartCard extends HTMLElement {
         period: period,
         types: ["mean", "min", "max"],
       });
+      const eventRows = await events;
       if (request !== this._request) return;
       this._data = result || {};
+      this._setEvents(eventRows);
       this._draw();
     } catch (err) {
       if (request !== this._request) return;
       this.shadowRoot.getElementById("info").textContent =
         this._t("stats_failed", { reason: (err && err.message) || err });
     }
+  }
+
+  _setEvents(rows) {
+    this._eventRows = rows;
+    if (rows) this._eventsError = null;
   }
 
   _unit(entityId) {
@@ -584,7 +758,7 @@ export class LongTermChartCard extends HTMLElement {
       this._renderStats(null);
       return;
     }
-    info.textContent = "";
+    info.textContent = this._eventsError ? this._t("events_failed", { reason: this._eventsError }) : "";
 
     const WIDTH = 600;
     const HEIGHT = this._config.height;
@@ -689,6 +863,43 @@ export class LongTermChartCard extends HTMLElement {
         '" font-size="11" fill="var(--secondary-text-color,#7c8ca3)">' +
         formatTime(t) + "</text>";
     }
+
+    // Events under everything else: a band over the whole height while active,
+    // a thin lane at the bottom (one per event, so overlapping ones stay
+    // apart), a dashed line for moments.
+    const drawn = [];
+    const plotBottom = HEIGHT - BOTTOM;
+    let lane = 0;
+    this._config.events.forEach((event, index) => {
+      const rows = this._eventRows && this._eventRows[index];
+      if (!rows) return;
+      // gaps under 2 px are not worth a separate band at this zoom
+      const gap = ((tMax - tMin) / (WIDTH - LEFT - RIGHT)) * 2;
+      const spans = event.mode === "band" ? mergeSpans(eventSpans(event, rows, tMin, tMax), gap) : [];
+      const markers = event.mode === "marker" ? eventMarkers(event, rows, tMin, tMax) : [];
+      drawn.push({ event, rows, spans, markers });
+      if (this._hidden.has(event.key)) return;
+      const laneY = plotBottom - 4 - lane * 5;
+      if (event.mode === "band") lane += 1;
+      for (const span of spans) {
+        const x1 = x(span.from);
+        const w = Math.max(1, x(span.to) - x1);
+        if (this._config.eventOpacity > 0) {
+          out +=
+            '<rect class="event-band" x="' + x1 + '" y="' + TOP + '" width="' + w + '" height="' + (plotBottom - TOP) +
+            '" fill="' + event.color + '" opacity="' + this._config.eventOpacity + '"/>';
+        }
+        out +=
+          '<rect class="event-lane" x="' + x1 + '" y="' + laneY + '" width="' + w +
+          '" height="4" fill="' + event.color + '" opacity="0.9"/>';
+      }
+      for (const marker of markers) {
+        out +=
+          '<line class="event-marker" x1="' + x(marker.at) + '" x2="' + x(marker.at) + '" y1="' + TOP +
+          '" y2="' + plotBottom + '" stroke="' + event.color + '" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.8"/>';
+      }
+    });
+    this._eventsDrawn = drawn;
 
     // Areas first, so no fill ever covers another series' line or band.
     // Gradient from the line colour down to transparent; ids are scoped to
@@ -820,7 +1031,29 @@ export class LongTermChartCard extends HTMLElement {
           (unit ? " " + escapeHtml(unit) : "") + "</span></span>"
         );
       })
+      .join("") + (this._eventsDrawn || [])
+      .map((d) => {
+        // a moment's state is just its time: no value next to the name
+        const value = d.event.mode === "marker" ? null : this._eventValueAt(d, atTime);
+        const off = this._hidden.has(d.event.key) ? " off" : "";
+        return (
+          '<span class="item event' + off + '" data-entity="' + escapeHtml(d.event.key) +
+          '" title="' + escapeHtml(this._t("toggle_hint")) + '"><span class="swatch" style="color:' +
+          d.event.color + ";background:" + d.event.color + '"></span><span>' + escapeHtml(this._label(d.event)) +
+          "</span>" + (value !== null ? '<span class="value">' + escapeHtml(String(value)) + "</span>" : "") + "</span>"
+        );
+      })
       .join("");
+  }
+
+  // The value of an event at a moment (the last change before it), or now.
+  _eventValueAt(drawn, atTime) {
+    let value = null;
+    for (const [t, v] of drawn.rows) {
+      if (atTime != null && t > atTime) break;
+      value = v;
+    }
+    return value;
   }
 
   _attachCursor() {
@@ -895,6 +1128,16 @@ export class LongTermChartCard extends HTMLElement {
           (unit ? " " + escapeHtml(unit) : "") +
           "</b></div>";
       });
+      const near = ((sc.tMax - sc.tMin) / (sc.width - sc.left - sc.right)) * 6; // 6 px either way
+      for (const d of this._eventsDrawn || []) {
+        if (this._hidden.has(d.event.key)) continue;
+        const span = d.spans.find((x) => x.from <= snapped && snapped <= x.to);
+        const marker = d.markers.find((m) => Math.abs(m.at - t) <= near);
+        if (!span && !marker) continue;
+        rows +=
+          '<div class="row"><span class="swatch" style="background:' + d.event.color + '"></span>' +
+          escapeHtml(this._label(d.event)) + "<b>" + (span ? escapeHtml(String(span.value)) : "") + "</b></div>";
+      }
       tip.innerHTML = '<div class="when">' + when(snapped) + "</div>" + rows;
 
       // Right of the line, or left of it when there is no room.

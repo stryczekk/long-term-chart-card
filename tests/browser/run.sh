@@ -23,6 +23,8 @@ if [ "$1" = "--shot" ]; then
   mkdir -p docs
   "$CHROME" $FLAGS --window-size=632,380 --screenshot=docs/screenshot.png \
     "http://127.0.0.1:$PORT/tests/browser/harness.html?shot=1" >/dev/null 2>&1
-  echo "screenshot: docs/screenshot.png"
+  "$CHROME" $FLAGS --window-size=632,380 --screenshot=docs/events.png \
+    "http://127.0.0.1:$PORT/tests/browser/harness.html?shot=events" >/dev/null 2>&1
+  echo "screenshots: docs/screenshot.png, docs/events.png"
 fi
 echo "$OUT" | grep -q "^OK " 
