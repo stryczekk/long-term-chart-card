@@ -463,6 +463,18 @@ if (shotMode === "events") {
   check("events: a failure keeps the chart and says why", q(evFail, "polyline").length === 1 &&
         evFail.shadowRoot.getElementById("info").textContent.includes("history down"),
         evFail.shadowRoot.getElementById("info").textContent);
+  // thresholds: humidity below 45 % twice, read from a numeric sensor's history
+  const dryHist = { "sensor.living_room_humidity": [
+    { s: "50", lc: sec(8 * DAY) }, { s: "44.5", lu: sec(6 * DAY) }, { s: "47", lu: sec(5.5 * DAY) },
+    { s: "unavailable", lu: sec(3 * DAY) }, { s: "41", lu: sec(2 * DAY) }, { s: "46", lu: sec(1 * DAY) }] };
+  const dry = await mount({ ...base, entities: [T], events: [{ entity: "sensor.living_room_humidity", below: 45, name: "Dry" }] },
+    fakeHass("en", { ws: (msg) => (msg.type === "history/history_during_period" ? dryHist : shifted) }));
+  await tick(100);
+  check("events: below threshold gives a band per dry period, unavailable is not active",
+        q(dry, ".event-band").length === 2, q(dry, ".event-band").length);
+  const dryLegend = dry.shadowRoot.querySelector('.item[data-entity="event:0"] .value')?.textContent;
+  check("events: a threshold event's value formatted like the series", dryLegend === "46.0 %", dryLegend);
+
   const evInflux = fakeHass("en", { api: (method, path) => path.startsWith("influx_proxy/states")
     ? { "climate.ac": [[now - 5 * DAY, "cool", "cooling", null], [now - 4 * DAY, "cool", "idle", null]] }
     : { [T]: shifted[T] } });

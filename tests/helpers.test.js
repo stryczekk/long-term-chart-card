@@ -267,3 +267,22 @@ test("mergeSpans: joins spans separated by less than the gap", () => {
   assert.deepEqual(card.mergeSpans(spans, 0).length, 3);
   assert.equal(spans[0].to, 10); // input untouched
 });
+
+test("events with above / below: numeric thresholds like a numeric_state trigger", () => {
+  const [dry, warm, band, bad] = card.normalizeEvents([
+    { entity: "sensor.humidity", below: 50 },
+    { entity: "sensor.power", above: "10" },
+    { entity: "sensor.temp", above: 20, below: 22 },
+    { entity: "sensor.x", above: "abc" },
+  ]);
+  assert.equal(card.isActive(dry, "48.2"), true);
+  assert.equal(card.isActive(dry, 50), false); // strictly below, as in Home Assistant
+  assert.equal(card.isActive(dry, "unavailable"), false);
+  assert.equal(card.isActive(warm, 12.5), true);
+  assert.equal(card.isActive(warm, "10"), false);
+  assert.equal(card.isActive(band, "21"), true);
+  assert.equal(card.isActive(band, "23"), false);
+  assert.equal(bad.above, null); // not a number: no threshold, back to states
+  assert.equal(card.isActive(bad, "on"), true);
+  assert.deepEqual(card.eventSpans(dry, [[0, "55"], [10, "49"], [20, "48"], [30, "51"]], 0, 40).map((x) => [x.from, x.to]), [[10, 30]]);
+});

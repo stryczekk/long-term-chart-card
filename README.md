@@ -122,7 +122,13 @@ events:
     states: [closed]                  # covers: closed is the interesting part
     name: Blinds down
   - event.doorbell                    # event, button, input_button, scene: a line per press
+  - entity: sensor.living_room_humidity
+    below: 40                         # numeric thresholds, as in a numeric_state trigger
+    name: Dry air
 ```
+
+Combinations ("the heater is on **and** the window is open") are one
+template binary sensor in Home Assistant away; put that sensor in `events`.
 
 ## Options
 
@@ -167,6 +173,7 @@ Event object:
 | `entity` | entity id — any domain |
 | `attribute` | use this attribute instead of the state, e.g. `hvac_action` of a `climate` entity |
 | `states` | the values that count as active; default: anything but `off`, `closed`, `idle`, `not_home`, `standby`, `unavailable`, `unknown`, `none` |
+| `above`, `below` | numeric thresholds instead of `states`: active while the value (state or `attribute`) is above and/or below them, as in a `numeric_state` trigger; non-numeric values are not active |
 | `mode` | `band` (default) or `marker` (a line at every change); `event`, `button`, `input_button` and `scene` entities are markers by default |
 | `name` | label (default: friendly name) |
 | `color` | as for entities; default: the next palette colour after the series |

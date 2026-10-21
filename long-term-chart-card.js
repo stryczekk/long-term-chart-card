@@ -22,12 +22,14 @@
 //     - entity: climate.living_room
 //       attribute: hvac_action
 //       states: [heating, cooling]
+//     - entity: sensor.living_room_humidity
+//       below: 40           # numeric thresholds, like a numeric_state trigger
 //
 // See README.md for all options.
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.3.0";
+export const VERSION = "1.4.0";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -177,6 +179,9 @@ export function normalizeEvents(list, offset = 0) {
     if (typeof entity !== "string" || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(entity)) return;
     const cfg = typeof item === "string" ? {} : item;
     const states = Array.isArray(cfg.states) ? cfg.states.map((v) => String(v)) : null;
+    // numeric thresholds, as in a numeric_state trigger: active while above and/or below
+    const above = Number.isFinite(Number(cfg.above)) && cfg.above !== null && cfg.above !== "" ? Number(cfg.above) : null;
+    const below = Number.isFinite(Number(cfg.below)) && cfg.below !== null && cfg.below !== "" ? Number(cfg.below) : null;
     const attribute = typeof cfg.attribute === "string" && /^[a-z0-9_]{1,60}$/.test(cfg.attribute) ? cfg.attribute : null;
     const domain = entity.split(".")[0];
     out.push({
@@ -186,6 +191,8 @@ export function normalizeEvents(list, offset = 0) {
       color: safeColor(cfg.color, COLORS[(offset + index) % COLORS.length]),
       attribute: attribute,
       states: states && states.length ? new Set(states) : null,
+      above: above,
+      below: below,
       mode: cfg.mode === "marker" || cfg.mode === "band" ? cfg.mode : MOMENT_DOMAINS.has(domain) ? "marker" : "band",
     });
   });
@@ -194,6 +201,11 @@ export function normalizeEvents(list, offset = 0) {
 
 export function isActive(event, value) {
   if (value === null || value === undefined) return false;
+  if (event.above !== null || event.below !== null) {
+    const n = typeof value === "number" ? value : value === "" ? NaN : Number(value);
+    if (!Number.isFinite(n)) return false; // unavailable, unknown: not active
+    return (event.above === null || n > event.above) && (event.below === null || n < event.below);
+  }
   const text = String(value);
   return event.states ? event.states.has(text) : !QUIET_STATES.has(text.toLowerCase());
 }
@@ -1040,10 +1052,20 @@ export class LongTermChartCard extends HTMLElement {
           '<span class="item event' + off + '" data-entity="' + escapeHtml(d.event.key) +
           '" title="' + escapeHtml(this._t("toggle_hint")) + '"><span class="swatch" style="color:' +
           d.event.color + ";background:" + d.event.color + '"></span><span>' + escapeHtml(this._label(d.event)) +
-          "</span>" + (value !== null ? '<span class="value">' + escapeHtml(String(value)) + "</span>" : "") + "</span>"
+          "</span>" + (value !== null ? '<span class="value">' + escapeHtml(this._eventText(d.event, value)) + "</span>" : "") + "</span>"
         );
       })
       .join("");
+  }
+
+  // An event value as text: numbers of a threshold event like the series (decimals, unit).
+  _eventText(event, value) {
+    const n = Number(value);
+    if ((event.above !== null || event.below !== null) && value !== "" && Number.isFinite(n)) {
+      const unit = event.attribute ? "" : this._unit(event.entity);
+      return formatNumber(this._lang(), n, this._config.decimals) + (unit ? " " + unit : "");
+    }
+    return String(value);
   }
 
   // The value of an event at a moment (the last change before it), or now.
@@ -1136,7 +1158,7 @@ export class LongTermChartCard extends HTMLElement {
         if (!span && !marker) continue;
         rows +=
           '<div class="row"><span class="swatch" style="background:' + d.event.color + '"></span>' +
-          escapeHtml(this._label(d.event)) + "<b>" + (span ? escapeHtml(String(span.value)) : "") + "</b></div>";
+          escapeHtml(this._label(d.event)) + "<b>" + (span ? escapeHtml(this._eventText(d.event, this._eventValueAt(d, snapped))) : "") + "</b></div>";
       }
       tip.innerHTML = '<div class="when">' + when(snapped) + "</div>" + rows;
 
