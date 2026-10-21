@@ -35,15 +35,20 @@ Assistant **long-term statistics** (no extra software), or from
 
 ## Installation
 
-### HACS
+### HACS (recommended)
 
-[![Open your Home Assistant instance and open this repository inside HACS.][hacs-open-badge]][hacs-open]
+Long-term Chart Card is in the HACS default store:
 
-1. Click the button above — it adds this repository to HACS in your Home
-   Assistant. Or manually: HACS → ⋮ → **Custom repositories** → add
-   `https://github.com/stryczekk/long-term-chart-card`, category **Dashboard**
-2. Install **Long-term Chart Card**
-3. Refresh the browser (the resource is added by HACS)
+1. Open **HACS**, search for **Long-term Chart Card** and download it — or
+   click the button to open it in HACS directly:
+
+   [![Open your Home Assistant instance and open this repository inside HACS.][hacs-open-badge]][hacs-open]
+
+2. Refresh the browser (the resource is added by HACS)
+
+Not found? Your HACS may not have refreshed its list yet: add it as a custom
+repository instead — HACS → ⋮ → **Custom repositories** →
+`https://github.com/stryczekk/long-term-chart-card`, category **Dashboard**.
 
 ### Manual
 
@@ -181,7 +186,7 @@ MIT
 [hacs-open]: https://my.home-assistant.io/redirect/hacs_repository/?owner=stryczekk&repository=long-term-chart-card&category=plugin
 [hacs-open-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
 [hacs]: https://hacs.xyz
-[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
+[hacs-badge]: https://img.shields.io/badge/HACS-Default-41BDF5.svg
 [validate]: https://github.com/stryczekk/long-term-chart-card/actions/workflows/validate.yml
 [validate-badge]: https://github.com/stryczekk/long-term-chart-card/actions/workflows/validate.yml/badge.svg
 [bmc]: https://buymeacoffee.com/stryczekk
