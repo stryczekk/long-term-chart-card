@@ -106,7 +106,7 @@ if (shotMode === "events") {
   check("left axis carries °C", texts.some((t) => t.includes("°C")), texts.join("|"));
   check("right axis carries %", texts.some((t) => t.includes("%")), texts.join("|"));
   const buttons = [...q(el, "#periods button")];
-  check("five default period buttons", buttons.length === 5, buttons.length);
+  check("six default period buttons", buttons.length === 6, buttons.length);
   check("'7 days' button active", buttons.find((b) => b.className === "active")?.textContent === "7 days",
         buttons.map((b) => b.className + ":" + b.textContent).join(","));
   check("hourly statistics requested for 7 days", hass.calls[0]?.period === "hour", JSON.stringify(hass.calls[0]));

@@ -29,7 +29,7 @@
 
 
 export const CARD_NAME = "long-term-chart-card";
-export const VERSION = "1.4.0";
+export const VERSION = "1.5.0";
 
 // Nine distinct hues - six were one cycle too few for eight room sensors.
 export const COLORS = [
@@ -102,7 +102,7 @@ export function periodLabel(lang, days) {
   return translate(lang, "period_days", { n: days });
 }
 
-export const DEFAULT_PERIOD_DAYS = [1, 7, 30, 90, 365];
+export const DEFAULT_PERIOD_DAYS = [1, 7, 30, 90, 180, 365];
 
 // Round grid steps only, so labels come out as 22, 24, 26 - not 21.7, 23.4.
 // 1 / 2 / 2.5 / 5 for every power of ten from 0.001 to 10^9, so large ranges

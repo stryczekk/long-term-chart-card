@@ -141,6 +141,8 @@ test("periodLabel", () => {
   assert.equal(card.periodLabel("en", 7), "7 days");
   assert.equal(card.periodLabel("pl", 7), "7 dni");
   assert.equal(card.periodLabel("en", 90), "3 months");
+  assert.equal(card.periodLabel("en", 180), "6 months");
+  assert.equal(card.periodLabel("pl", 180), "6 mies.");
   assert.equal(card.periodLabel("pl", 365), "rok");
   assert.equal(card.periodLabel("en", 0.5), "12 h");
 });

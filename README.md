@@ -138,7 +138,7 @@ template binary sensor in Home Assistant away; put that sensor in `events`.
 | `title` | — | card title |
 | `source` | `statistics` | `statistics` (Home Assistant long-term statistics) or `influx` (InfluxDB Proxy) |
 | `days` | second period button (7 with the default buttons) | period selected when the card loads |
-| `periods` | 1, 7, 30, 90, 365 days | buttons above the chart: `{ days, label }`, label optional |
+| `periods` | 1, 7, 30, 90, 180, 365 days | buttons above the chart: `{ days, label }`, label optional |
 | `show_range` | `true` | draw the min/max band |
 | `band_opacity` | `0.12` | opacity of the min/max band, `0`–`1` (`0` draws no band) |
 | `fill` | `false` | fill the area under every line with a gradient of its colour; per entity with `fill: true/false` |
