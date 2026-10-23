@@ -23,7 +23,7 @@ Assistant **long-term statistics** (no extra software), or from
 - optional **min / avg / max table** for the selected period
 - **two Y axes** — e.g. temperature on the left, humidity on the right —
   with the **grids aligned**, so there is one set of grid lines, not two
-- **period buttons** (24 h, 7 days, 30 days, 3 months, 1 year by default)
+- **period buttons** (24 h, 7 days, 30 days, 3 months, 6 months, 1 year by default)
 - **tooltip** snapped to real samples, hover dots, live values in the legend
 - **click the legend** to hide a series — the scale adapts to what is left
 - **readable grid**: round steps (22, 24, 26 — not 21.7, 23.4), optional
